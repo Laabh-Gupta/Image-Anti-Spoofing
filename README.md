@@ -1,73 +1,74 @@
----
-tags:
-- image-classification
-- anti-spoofing
-- deepfake-detection
-- ai-generated-detection
-- pytorch
-license: mit
----
+# Image Anti-Spoofing
 
-# Image Anti-Spoofing System
+**Computer-vision experiments connected to a React/FastAPI inference application.**
 
-Detects whether an image is **real** or **fake** (AI-generated OR deepfake/manipulated).
+[Model artifacts](https://huggingface.co/LaabhGupta/image-antispoofing) · [Training notebook](notebooks/FakeVsReal_Image_1.ipynb) · [Serving code](backend/main.py)
 
-Third project in a multi-modal anti-spoofing portfolio, alongside [Voice-Anti-Spoofing](https://huggingface.co/LaabhGupta/voice-antispoofing) and [Text-Anti-Spoofing](https://huggingface.co/LaabhGupta/Text-Anti-Spoofing).
+Classify images as **REAL** or **FAKE**, where FAKE combines generated and manipulated/deepfake examples. The repository contains a training notebook, three PyTorch architecture definitions, image preprocessing, an inference API and a browser upload interface.
 
-## Architectures
+## Dataset & method
 
-Three architectures were trained and compared on the same data:
+The project uses [prithivMLmods/AI-vs-Deepfake-vs-Real](https://huggingface.co/datasets/prithivMLmods/AI-vs-Deepfake-vs-Real). Original Artificial and Deepfake labels are merged into FAKE; Real maps to REAL.
 
-| Architecture | Description |
-|---|---|
-| `BaselineCNN` | Shallow 3-block Conv2D CNN |
-| `DeeperCNN` | Deeper 4-block CNN with BatchNorm |
-| `ViTModel` | ViT-B/16 (ImageNet-pretrained) adapted for RGB images via transfer learning |
-
-## Training data
-
-[`prithivMLmods/AI-vs-Deepfake-vs-Real`](https://huggingface.co/datasets/prithivMLmods/AI-vs-Deepfake-vs-Real) — original 3-way labels (`Artificial`, `Deepfake`, `Real`) merged into a binary task: `Real` (0) vs `Fake` (1, covering both AI-generated and deepfake images), to detect AI manipulation of any kind in one model.
-
-## Results (test set accuracy)
-
-| Model | Test Accuracy | File size |
-|---|---|---|
-| Baseline CNN | 98.80% | ~26MB |
-| Deeper CNN | 99.20% | ~26MB |
-| ViT | **100.00%** | ~343MB |
-
-**Important caveat on the ViT's 100% score:** a perfect test-set score is a signal to scrutinize, not just celebrate. It likely reflects that this dataset's fake images (from a specific, fixed set of generators) have consistent, learnable artifacts, rather than the model having solved "detect any AI-manipulated image" universally. Performance against newer/unseen generators (e.g. Midjourney v6, Flux, Stable Diffusion 3, or generators not represented in this training set) is untested and likely to be lower - this is a common "concept drift" issue in this field, since fake-image generators keep improving and older detectors don't automatically generalize to them.
-
-**Recommended checkpoint for deployment: `deeper_cnn_model.pth`.** At 99.20% accuracy and ~26MB (vs. ViT's 343MB), it offers a strong practical tradeoff between accuracy and deployment cost (faster cold starts, less bandwidth) with a more plausible, less potentially-overfit accuracy figure than the ViT's perfect score.
-
-## Files in this repo
-
-- `baseline_cnn_model.pth`
-- `deeper_cnn_model.pth` (recommended)
-- `vit_model.pth`
-- `model.py` - architecture class definitions + preprocessing pipeline, required to load any of the above
-
-## Input format
-
-- Any image `PIL` can open (`.jpg`, `.png`, etc.)
-- Resized to 224x224
-- Normalized with standard ImageNet mean/std
-
-`model.py` includes a `preprocess_image()` function that handles all of this automatically.
-
-## Usage
-
-```python
-from huggingface_hub import hf_hub_download
-import sys
-
-model_py_path = hf_hub_download(repo_id="LaabhGupta/image-antispoofing", filename="model.py")
-weights_path = hf_hub_download(repo_id="LaabhGupta/image-antispoofing", filename="deeper_cnn_model.pth")
-
-sys.path.insert(0, model_py_path.rsplit("/", 1)[0])
-from model import load_model, predict
-
-model = load_model("deeper", weights_path, device="cpu")
-label, confidence = predict("path/to/image.jpg", model, device="cpu")
-print(label, confidence)
+```mermaid
+flowchart TD
+    A[Image upload] --> B[RGB conversion]
+    B --> C[224 by 224 resize and ImageNet normalization]
+    C --> D[PyTorch deeper CNN]
+    D --> E[REAL or FAKE and softmax score]
 ```
+
+The [model definitions](backend/model.py) include a three-block baseline CNN, a four-block CNN with batch normalization, and ViT-B/16. The API loads **`deeper_cnn_model.pth`** from Hugging Face Hub onto CPU. The training comparison and serving checkpoint are separate choices.
+
+## Reported evaluation
+
+The original project documentation records:
+
+| Model | Test accuracy |
+| --- | ---: |
+| Baseline CNN | 98.80% |
+| Deeper CNN | 99.20% |
+| ViT | 100.00% |
+
+These dataset-specific results are not a claim of universal detection. The perfect ViT result warrants scrutiny of split construction, duplicate content and generator overlap. Generalization to unseen generators is not established, and no new benchmark was run for this documentation update. Softmax confidence is not calibrated proof that an image is authentic.
+
+## Run locally
+
+Use Python 3.10 and a Node.js/npm installation compatible with React Scripts 5.
+
+```bash
+git clone https://github.com/Laabh-Gupta/Image-Anti-Spoofing.git
+cd Image-Anti-Spoofing
+python -m venv .venv
+```
+
+Activate `.venv`. The following separates the CPU package index from general Python dependencies:
+
+```bash
+python -m pip install "numpy<2" fastapi uvicorn python-multipart huggingface_hub pillow
+python -m pip install torch==2.2.0 torchvision==0.17.0 --index-url https://download.pytorch.org/whl/cpu
+cd backend
+python -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+Startup downloads the checkpoint. In another terminal:
+
+```bash
+cd Image-Anti-Spoofing/frontend
+npm install
+```
+
+Create `frontend/.env.local` with `REACT_APP_BACKEND_URL=http://127.0.0.1:8000`, then run `npm start`. Open `http://localhost:3000`.
+
+The API accepts multipart field `file` at `POST /predict/`, supporting JPG/JPEG, PNG, WebP and BMP. `GET /` returns basic service status.
+
+## Structure & deployment status
+
+- [backend/](backend/): FastAPI service, model definitions and dependencies.
+- [frontend/](frontend/): React upload/results interface.
+- [notebooks/](notebooks/): model-training experiment.
+- Hugging Face Hub hosts the referenced model artifacts.
+
+No verified public application deployment is claimed here. The current API has broad CORS and no explicit upload-size cap, rate limiter or authentication; those controls need review before broader deployment. The notebook's environment, split and artifacts should be recorded together for reproducible model comparison.
+
+**Python · PyTorch · Torchvision · FastAPI · React · Hugging Face Hub**
